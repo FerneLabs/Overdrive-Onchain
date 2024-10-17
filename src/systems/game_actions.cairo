@@ -2,16 +2,8 @@ use overdrive::models::{
     game_models::{Game, GamePlayer, GameTrait, GameMode, GameStatus, Cipher, CipherTypes}
 };
 use overdrive::utils;
+use overdrive::constants;
 use starknet::{ContractAddress, contract_address_const};
-
-pub mod Errors {
-    pub const ADDRESS_ZERO: felt252 = 'Cannot create from zero address';
-    pub const USERNAME_TAKEN: felt252 = 'username already taken';
-    pub const USERNAME_NOT_FOUND: felt252 = 'player with username not found';
-    pub const USERNAME_EXIST: felt252 = 'username already exist';
-    pub const ONLY_OWNER_USERNAME: felt252 = 'only user can update username';
-    pub const UNKNOWN_CIPHER_TYPE: felt252 = 'cipher type is not valid';
-}
 
 #[dojo::interface]
 trait IGameActions {
@@ -26,9 +18,8 @@ trait IGameActions {
 
 #[dojo::contract]
 mod gameActions {
-    use super::Errors;
     use super::{
-        IGameActions, Game, GamePlayer, GameMode, GameStatus, GameTrait, Cipher, CipherTypes, utils
+        IGameActions, Game, GamePlayer, GameMode, GameStatus, GameTrait, Cipher, CipherTypes, utils, constants
     };
     use starknet::{
         ContractAddress, contract_address_const, SyscallResultTrait, get_caller_address,
@@ -96,45 +87,19 @@ mod gameActions {
 
         fn get_ciphers(ref world: IWorldDispatcher) {
             // let START_ENERGY = 6;
-            let REGEN_SECONDS: u64 = 3;
             let caller_address = get_caller_address();
             let mut player = get!(world, caller_address, (GamePlayer));
 
-            let current_time = get_block_timestamp();
-            let time_since_action: u64 = current_time - player.last_action_timestamp;
-
-            let energy_regenerated: u64 = time_since_action / REGEN_SECONDS;
-            let reminder_seconds: u64 = time_since_action % REGEN_SECONDS;
-
-            println!(
-                "Energy regenerated {:?} in {:?} seconds", energy_regenerated, time_since_action
-            );
-            println!(
-                "Current energy: {:?} ({:?} + {:?})",
-                player.energy + energy_regenerated.into(),
-                player.energy,
-                energy_regenerated
-            );
-
-            player
-                .energy =
-                    if (player.energy + energy_regenerated.into() > 10) {
-                        10
-                    } else {
-                        player.energy + energy_regenerated.into()
-                    };
+            utils::calc_energy_regen(ref player);
 
             if (player.energy >= 4) {
-                // Pseudo-random seed generation using caller address, block_number, game_id, and
-                // current time
+                // Pseudo-random seed generation
                 let seed = utils::hash4(
                     caller_address.into(),
                     get_block_number().into(),
                     player.game_id.into(),
-                    current_time.into()
+                    get_block_timestamp().into()
                 );
-                // println!("Creating seed with: {:?} / {:?} / {:?} / {:?}", owner,
-                // get_block_number(), game_id, current_time);
 
                 // Generate 6 pseudo-random numbers using different hash inputs
                 let type_1_hash: u256 = utils::hash2(seed, 1).into();
@@ -149,20 +114,17 @@ mod gameActions {
                 player.get_cipher_3 = GameTrait::gen_cipher(type_3_hash, value_3_hash);
 
                 player.energy -= 4;
-                player.last_action_timestamp = current_time - reminder_seconds;
 
                 set!(world, (player));
             }
         }
 
-        fn set_player(
-            ref world: IWorldDispatcher, ciphers: Array<Cipher>, player_address: ContractAddress
-        ) {
+        fn set_player(ref world: IWorldDispatcher, ciphers: Array<Cipher>, player_address: ContractAddress) {
             if ciphers.len() < 2 {
                 println!("NO SE HACE NADA");
                 return;
             }
-    
+
             let mut player = get!(world, player_address, (GamePlayer));
             let game = get!(world, player.game_id, (Game));
             let mut opponent = if (game.player_1 == player_address) {
@@ -170,77 +132,16 @@ mod gameActions {
             } else {
                 get!(world, game.player_1, (GamePlayer))
             };
-
-            let mut cipher_total_value = 0;
-            let mut cipher_total_type = CipherTypes::Unknown(());
-            // Check for max combo
-            if (ciphers.len() == 3
-                && ciphers[0].cipher_type == ciphers[1].cipher_type
-                && ciphers[0].cipher_type == ciphers[2].cipher_type) {
-                cipher_total_value += (*ciphers[0].cipher_value + *ciphers[1].cipher_value + *ciphers[2].cipher_value) * 2;
-                cipher_total_type = *ciphers[0].cipher_type;
-            }
-
-            // Check if at least there are two equal types
-            if (ciphers.len() == 2 && ciphers[0].cipher_type == ciphers[1].cipher_type) {
-                cipher_total_value = *ciphers[0].cipher_value + *ciphers[1].cipher_value;
-                cipher_total_type = *ciphers[0].cipher_type;
-            }
-            if (ciphers.len() == 3 && ciphers[0].cipher_type == ciphers[2].cipher_type) {
-                cipher_total_value = *ciphers[0].cipher_value + *ciphers[2].cipher_value;
-                cipher_total_type = *ciphers[0].cipher_type;
-            }
-            if (ciphers.len() == 3 && ciphers[1].cipher_type == ciphers[2].cipher_type) {
-                cipher_total_value = *ciphers[1].cipher_value + *ciphers[2].cipher_value;
-                cipher_total_type = *ciphers[1].cipher_type;
-            }
             
-            println!(
-                "CIPHER 1 TYPE: {:?} VALUE: {:?}", ciphers[0].cipher_type, ciphers[0].cipher_value
-            );
-            println!(
-                "CIPHER 2 TYPE: {:?} VALUE: {:?}", ciphers[1].cipher_type, ciphers[1].cipher_value
-            );
-            if ciphers.len() == 3 {
-                println!(
-                    "CIPHER 3 TYPE: {:?} VALUE: {:?}",
-                    ciphers[2].cipher_type,
-                    ciphers[2].cipher_value
-                );
-            }
-            println!("CIPHER TOTAL TYPE: {:?} VALUE: {:?}", cipher_total_type, cipher_total_value);
-
-            match cipher_total_type {
-                CipherTypes::Advance => { 
-                    player.score += cipher_total_value.into();
-                    // TODO: Check for end game
-                },
-                CipherTypes::Attack => {
-                    let mut cipher_attack = if (opponent.shield > cipher_total_value.into()) {
-                        opponent.shield -= cipher_total_value.into();
-                        0
-                    } else {
-                        let shield = opponent.shield;
-                        opponent.shield = 0;
-                        cipher_total_value.into() - shield
-                    };
-
-                    if (opponent.score < cipher_attack) {
-                        opponent.score = 0;
-                    } else {
-                        opponent.score -= cipher_attack;
-                    }
-                },
-                CipherTypes::Shield => { player.shield += cipher_total_value.into(); },
-                CipherTypes::Energy => { player.energy += cipher_total_value.into(); },
-                _ => { assert(cipher_total_type == CipherTypes::Unknown, Errors::UNKNOWN_CIPHER_TYPE); },
-            }
+            utils::calc_energy_regen(ref player);
+            let (mut cipher_total_value, mut cipher_total_type) = utils::get_cipher_stats(ciphers);
+            utils::handle_cipher_action(ref player, ref opponent, cipher_total_type, cipher_total_value);
 
             // Reset player ciphers
             player.get_cipher_1 = Cipher { cipher_type: CipherTypes::Unknown, cipher_value: 0 };
             player.get_cipher_2 = Cipher { cipher_type: CipherTypes::Unknown, cipher_value: 0 };
             player.get_cipher_3 = Cipher { cipher_type: CipherTypes::Unknown, cipher_value: 0 };
-
+            
             set!(world, (player));
         }
 

@@ -12,7 +12,7 @@ if [[ $1 == "help" ]]; then
     echo -e "   init                                  Initialize game";
     echo -e "   state GAME_ID                         Get game state";
     echo -e "   request                               Request ciphers";
-    echo -e "   set CIPHER_VALUE CIPHER_TYPE          Set player state";
+    echo -e "   set PARAMS                            Set player state";
     exit 1;
 fi
 
@@ -42,5 +42,5 @@ if [[ $1 == "request" ]]; then
 fi
 
 if [[ $1 == "set" ]]; then
-   sozo execute overdrive-gameActions set_player -c u256:$(($2)),$(($3))
+   sozo execute overdrive-gameActions set_player -c $2
 fi

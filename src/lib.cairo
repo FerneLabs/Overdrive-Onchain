@@ -10,6 +10,8 @@ mod models {
 
 mod utils;
 
+mod constants;
+
 mod tests {
     mod test_world;
 }
