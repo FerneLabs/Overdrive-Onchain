@@ -9,7 +9,8 @@ pub mod Errors {
     pub const USERNAME_TAKEN: felt252 = 'username already taken';
     pub const USERNAME_NOT_FOUND: felt252 = 'player with username not found';
     pub const USERNAME_EXIST: felt252 = 'username already exist';
-    pub const ONLY_OWNER_USERNAME: felt252 = 'only user can udpate username';
+    pub const ONLY_OWNER_USERNAME: felt252 = 'only user can update username';
+    pub const UNKNOWN_CIPHER_TYPE: felt252 = 'cipher type is not valid';
 }
 
 #[dojo::interface]
@@ -161,32 +162,39 @@ mod gameActions {
                 println!("NO SE HACE NADA");
                 return;
             }
+    
+            let mut player = get!(world, player_address, (GamePlayer));
+            let game = get!(world, player.game_id, (Game));
+            let mut opponent = if (game.player_1 == player_address) {
+                get!(world, game.player_2, (GamePlayer))
+            } else {
+                get!(world, game.player_1, (GamePlayer))
+            };
 
             let mut cipher_total_value = 0;
             let mut cipher_total_type = CipherTypes::Unknown(());
             // Check for max combo
-            if ciphers.len() == 3
+            if (ciphers.len() == 3
                 && ciphers[0].cipher_type == ciphers[1].cipher_type
-                && ciphers[0].cipher_type == ciphers[2].cipher_type {
-                cipher_total_value +=
-                    (*ciphers[0].cipher_value + *ciphers[1].cipher_value + *ciphers[2].cipher_value)
-                    * 2;
+                && ciphers[0].cipher_type == ciphers[2].cipher_type) {
+                cipher_total_value += (*ciphers[0].cipher_value + *ciphers[1].cipher_value + *ciphers[2].cipher_value) * 2;
                 cipher_total_type = *ciphers[0].cipher_type;
-            } else {
-                // Check if at least there are two equal types
-                if (ciphers.len() > 2 && ciphers[0].cipher_type == ciphers[1].cipher_type) {
-                    cipher_total_value = *ciphers[0].cipher_value + *ciphers[1].cipher_value;
-                    cipher_total_type = *ciphers[0].cipher_type;
-                }
-                if (ciphers.len() == 3 && ciphers[0].cipher_type == ciphers[2].cipher_type) {
-                    cipher_total_value = *ciphers[0].cipher_value + *ciphers[2].cipher_value;
-                    cipher_total_type = *ciphers[0].cipher_type;
-                }
-                if (ciphers.len() == 3 && ciphers[1].cipher_type == ciphers[2].cipher_type) {
-                    cipher_total_value = *ciphers[1].cipher_value + *ciphers[2].cipher_value;
-                    cipher_total_type = *ciphers[1].cipher_type;
-                }
-            };
+            }
+
+            // Check if at least there are two equal types
+            if (ciphers.len() == 2 && ciphers[0].cipher_type == ciphers[1].cipher_type) {
+                cipher_total_value = *ciphers[0].cipher_value + *ciphers[1].cipher_value;
+                cipher_total_type = *ciphers[0].cipher_type;
+            }
+            if (ciphers.len() == 3 && ciphers[0].cipher_type == ciphers[2].cipher_type) {
+                cipher_total_value = *ciphers[0].cipher_value + *ciphers[2].cipher_value;
+                cipher_total_type = *ciphers[0].cipher_type;
+            }
+            if (ciphers.len() == 3 && ciphers[1].cipher_type == ciphers[2].cipher_type) {
+                cipher_total_value = *ciphers[1].cipher_value + *ciphers[2].cipher_value;
+                cipher_total_type = *ciphers[1].cipher_type;
+            }
+            
             println!(
                 "CIPHER 1 TYPE: {:?} VALUE: {:?}", ciphers[0].cipher_type, ciphers[0].cipher_value
             );
@@ -202,38 +210,36 @@ mod gameActions {
             }
             println!("CIPHER TOTAL TYPE: {:?} VALUE: {:?}", cipher_total_type, cipher_total_value);
 
-            let mut player = get!(world, player_address, (GamePlayer));
-
             match cipher_total_type {
-                CipherTypes::Advance => { player.score += cipher_total_value.into(); },
+                CipherTypes::Advance => { 
+                    player.score += cipher_total_value.into();
+                    // TODO: Check for end game
+                },
                 CipherTypes::Attack => {
-                    let mut cipher_attack = if player.shield > cipher_total_value.into() {
-                        player.shield -= cipher_total_value.into();
+                    let mut cipher_attack = if (opponent.shield > cipher_total_value.into()) {
+                        opponent.shield -= cipher_total_value.into();
                         0
                     } else {
-                        let shield = player.shield;
-                        player.shield = 0;
+                        let shield = opponent.shield;
+                        opponent.shield = 0;
                         cipher_total_value.into() - shield
                     };
 
-                    if player.score < cipher_attack {
-                        player.score = 0;
+                    if (opponent.score < cipher_attack) {
+                        opponent.score = 0;
                     } else {
-                        player.score -= cipher_attack;
+                        opponent.score -= cipher_attack;
                     }
                 },
                 CipherTypes::Shield => { player.shield += cipher_total_value.into(); },
-                //TODO JOJO CHEQUEA EL TEMA DE LA ENERGIA
-                CipherTypes::Energy => {
-                    if player.energy + cipher_total_value.into() < 10 {
-                        player.energy = 10;
-                    } else {
-                        player.energy += cipher_total_value.into();
-                    }
-                },
-                //TODO SE PODRIA PONER UN ASSERT
-                CipherTypes::Unknown => {},
+                CipherTypes::Energy => { player.energy += cipher_total_value.into(); },
+                _ => { assert(cipher_total_type == CipherTypes::Unknown, Errors::UNKNOWN_CIPHER_TYPE); },
             }
+
+            // Reset player ciphers
+            player.get_cipher_1 = Cipher { cipher_type: CipherTypes::Unknown, cipher_value: 0 };
+            player.get_cipher_2 = Cipher { cipher_type: CipherTypes::Unknown, cipher_value: 0 };
+            player.get_cipher_3 = Cipher { cipher_type: CipherTypes::Unknown, cipher_value: 0 };
 
             set!(world, (player));
         }
